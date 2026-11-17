@@ -1,11 +1,61 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /messages/{message} {
-      // Note: these are extremely basic rules but these rules are NOT secure enough
-      // for a production chat app.
-      allow read: if request.auth.token.email != null;
-      allow write: if request.resource.data.keys().hasOnly(['text', 'time'])
+
+    function signedIn() {
+      return request.auth != null && request.auth.token.email != null;
+    }
+    function email() {
+      return request.auth.token.email.lower();
+    }
+    function rolePath() {
+      return /databases/$(database)/documents/userRoles/$(email());
+    }
+    function hasRole() {
+      return signedIn() && exists(rolePath());
+    }
+    function role() {
+      return get(rolePath()).data;
+    }
+    function isActive() {
+      return hasRole() && role().disabled != true;
+    }
+    function isSuper() {
+      return isActive() && role().superadmin == true;
+    }
+    function isMemberOf(projectId) {
+      return isSuper() || (isActive() && role().projects is map && role().projects[projectId] != null);
+    }
+    function isBootstrap() {
+      return signedIn() && (email() == 'saditya841@gmail.com' || email() == 'pcsmining32@gmail.com');
+    }
+
+    match /userRoles/{userEmail} {
+      allow read: if signedIn() && (email() == userEmail || isSuper());
+      allow create: if isBootstrap()
+        && userEmail == email()
+        && request.resource.data.superadmin == true
+        && request.resource.data.disabled != true;
+      allow create, update, delete: if isSuper();
+    }
+
+    match /accessRequests/{userEmail} {
+      allow read: if signedIn() && (email() == userEmail || isSuper());
+      allow create: if signedIn()
+        && userEmail == email()
+        && request.resource.data.email == email()
+        && request.resource.data.status == 'pending';
+      allow update: if isSuper();
+      allow delete: if signedIn() && (email() == userEmail || isSuper());
+    }
+
+    match /projectSettings/{projectId} {
+      allow read: if isMemberOf(projectId);
+      allow write: if isSuper();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }
